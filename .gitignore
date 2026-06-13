@@ -1,0 +1,20 @@
+# Local backend configuration with database and OAuth secrets
+backedn/src/main/resources/application.yaml
+
+# Build outputs
+backedn/target/
+frontend/build/
+frontend/node_modules/
+
+# Logs
+*.log
+
+# Local environment files
+.env
+.env.*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

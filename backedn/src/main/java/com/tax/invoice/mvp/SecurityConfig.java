@@ -29,9 +29,11 @@ import java.util.List;
 @EnableMethodSecurity
 public class SecurityConfig {
     private final AuthService authService;
+    private final OAuthSuccessHandler oAuthSuccessHandler;
 
-    public SecurityConfig(AuthService authService) {
+    public SecurityConfig(AuthService authService, OAuthSuccessHandler oAuthSuccessHandler) {
         this.authService = authService;
+        this.oAuthSuccessHandler = oAuthSuccessHandler;
     }
 
     @Bean
@@ -39,11 +41,12 @@ public class SecurityConfig {
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/oauth/demo", "/h2-console/**").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/oauth/demo",
+                                "/oauth2/**", "/login/oauth2/**").permitAll()
                         .anyRequest().authenticated())
-                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
+                .oauth2Login(oauth -> oauth.successHandler(oAuthSuccessHandler))
                 .addFilterBefore(new TokenAuthFilter(authService), UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
