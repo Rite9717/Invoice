@@ -3,6 +3,7 @@ import './App.css';
 
 const API_BASE = 'http://localhost:8080/api';
 const API_ORIGIN = 'http://localhost:8080';
+const LOCAL_BILLS_KEY = 'invoice-desk-generated-bills';
 
 const demoData = {
   clients: [
@@ -20,8 +21,8 @@ const demoData = {
     { id: 3, clientId: 2, name: 'Blue Bay Stores', email: 'finance@bluebay.in', phone: '+91 88888 33333', gstNumber: '07ABCDE7654F1Z5', state: 'Delhi', address: 'New Delhi' },
   ],
   invoices: [
-    { id: 1, clientId: 1, customerId: 1, invoiceNumber: 'INV-2026-001', issueDate: '2026-06-05', dueDate: '2026-06-20', taxPercent: 18, gstType: 'CGST_SGST', paidAmount: 50000, paymentStatus: 'PARTIAL', status: 'SENT', items: [{ description: 'Spring Boot + React MVP sprint', quantity: 1, unitPrice: 75000 }, { description: 'Deployment setup', quantity: 1, unitPrice: 15000 }] },
-    { id: 2, clientId: 2, customerId: 3, invoiceNumber: 'INV-2026-002', issueDate: '2026-06-10', dueDate: '2026-06-25', taxPercent: 18, gstType: 'IGST', paidAmount: 0, paymentStatus: 'UNPAID', status: 'DRAFT', items: [{ description: 'Monthly support retainer', quantity: 1, unitPrice: 25000 }] },
+    { id: 1, clientId: 1, customerId: 1, invoiceNumber: 'INV-2026-001', issueDate: '2026-06-05', dueDate: '2026-06-20', taxPercent: 18, gstType: 'CGST_SGST', paidAmount: 50000, paymentStatus: 'PARTIAL', status: 'SENT', items: [{ description: 'Spring Boot + React MVP sprint', hsnCode: '998314', quantity: 1, unitPrice: 75000 }, { description: 'Deployment setup', hsnCode: '998313', quantity: 1, unitPrice: 15000 }] },
+    { id: 2, clientId: 2, customerId: 3, invoiceNumber: 'INV-2026-002', issueDate: '2026-06-10', dueDate: '2026-06-25', taxPercent: 18, gstType: 'IGST', paidAmount: 0, paymentStatus: 'UNPAID', status: 'DRAFT', items: [{ description: 'Monthly support retainer', hsnCode: '998313', quantity: 1, unitPrice: 25000 }] },
   ],
   payments: [{ id: 1, invoiceId: 1, amount: 50000, mode: 'UPI', paidOn: '2026-06-11', note: 'Advance received' }],
   audits: [
@@ -71,6 +72,27 @@ function scoped(list, user) {
   return list.filter((item) => item.clientId === user.clientId);
 }
 
+function readLocalBills() {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_BILLS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalBill(invoice) {
+  const existing = readLocalBills();
+  const withoutDuplicate = existing.filter((item) => item.id !== invoice.id && item.invoiceNumber !== invoice.invoiceNumber);
+  localStorage.setItem(LOCAL_BILLS_KEY, JSON.stringify([invoice, ...withoutDuplicate]));
+}
+
+function mergeLocalBills(invoices, user) {
+  const visibleLocalBills = scoped(readLocalBills(), user);
+  const existingKeys = new Set(invoices.map((invoice) => `${invoice.id}-${invoice.invoiceNumber}`));
+  const missingLocalBills = visibleLocalBills.filter((invoice) => !existingKeys.has(`${invoice.id}-${invoice.invoiceNumber}`));
+  return [...missingLocalBills, ...invoices];
+}
+
 function App() {
   const [token, setToken] = useState('');
   const [user, setUser] = useState(null);
@@ -84,8 +106,15 @@ function App() {
   const [audits, setAudits] = useState([]);
   const [report, setReport] = useState(demoData.report);
   const [summary, setSummary] = useState(null);
+  const [customerView, setCustomerView] = useState('billing');
   const [authForm, setAuthForm] = useState({ name: 'Ritesh Kumar', email: 'admin@invoice.local', password: 'admin123', role: 'CLIENT_ADMIN' });
-  const [invoiceForm, setInvoiceForm] = useState({ clientId: 1, customerId: 1, description: 'GST compliant invoice setup', quantity: 1, unitPrice: 50000, gstType: 'CGST_SGST', status: 'DRAFT' });
+  const [invoiceForm, setInvoiceForm] = useState({
+    clientId: 1,
+    customerId: 1,
+    gstType: 'CGST_SGST',
+    status: 'DRAFT',
+    items: [{ description: '', hsnCode: '', quantity: 1, unitPrice: '' }],
+  });
   const [paymentForm, setPaymentForm] = useState({ invoiceId: 1, amount: 25000, mode: 'UPI', note: 'Payment received' });
 
   useEffect(() => {
@@ -141,8 +170,9 @@ function App() {
         api('/reports/audit', nextToken),
       ]);
       const clientData = nextUser.role === 'CA_SUPER_ADMIN' ? await api('/clients', nextToken) : [await api('/clients/me', nextToken)];
-      setInvoices(invoiceData);
-      setSummary(summaryData);
+      const mergedInvoices = mergeLocalBills(invoiceData, nextUser);
+      setInvoices(mergedInvoices);
+      setSummary(readLocalBills().length ? null : summaryData);
       setProducts(productData);
       setCustomers(customerData);
       setPayments(paymentData);
@@ -154,7 +184,7 @@ function App() {
       setClients(nextUser.role === 'CA_SUPER_ADMIN' ? demoData.clients : demoData.clients.filter((client) => client.id === nextUser.clientId));
       setProducts(scoped(demoData.products, nextUser));
       setCustomers(scoped(demoData.customers, nextUser));
-      setInvoices(scoped(demoData.invoices, nextUser));
+      setInvoices(mergeLocalBills(scoped(demoData.invoices, nextUser), nextUser));
       setPayments(demoData.payments);
       setAudits(demoData.audits);
       setReport(demoData.report);
@@ -188,25 +218,78 @@ function App() {
 
   async function createInvoice(event) {
     event.preventDefault();
+    const selectedClientId = user?.role === 'CA_SUPER_ADMIN' ? Number(invoiceForm.clientId) : Number(user?.clientId || invoiceForm.clientId);
+    const selectedCustomerId = user?.role === 'CUSTOMER'
+      ? Number(visibleCustomers[0]?.id || invoiceForm.customerId || 0)
+      : Number(invoiceForm.customerId);
+    const lineItems = invoiceForm.items
+      .filter((item) => item.description.trim() || item.hsnCode.trim() || Number(item.unitPrice) > 0)
+      .map((item) => ({
+        description: item.description.trim(),
+        hsnCode: item.hsnCode.trim(),
+        quantity: Number(item.quantity || 1),
+        unitPrice: Number(item.unitPrice || 0),
+      }));
     const newInvoice = {
-      clientId: Number(invoiceForm.clientId),
-      customerId: Number(invoiceForm.customerId),
+      clientId: selectedClientId,
+      customerId: selectedCustomerId,
       issueDate: new Date().toISOString().slice(0, 10),
       dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
       taxPercent: 18,
       gstType: invoiceForm.gstType,
-      status: invoiceForm.status,
-      items: [{ description: invoiceForm.description, quantity: Number(invoiceForm.quantity), unitPrice: Number(invoiceForm.unitPrice) }],
+      status: user?.role === 'CUSTOMER' ? 'GENERATED' : invoiceForm.status,
+      items: lineItems,
     };
     try {
       const saved = await api('/invoices', token, { method: 'POST', body: JSON.stringify(newInvoice) });
+      if (user?.role === 'CUSTOMER') {
+        saveLocalBill(saved);
+      }
       setInvoices((current) => [saved, ...current]);
-      setStatus('Invoice created with GST calculation');
+      setStatus(user?.role === 'CUSTOMER' ? 'Final bill created' : 'Invoice created with GST calculation');
     } catch {
-      setInvoices((current) => [{ ...newInvoice, id: Date.now(), invoiceNumber: `INV-DEMO-${current.length + 1}`, paidAmount: 0, paymentStatus: 'UNPAID' }, ...current]);
-      setStatus('Invoice added to browser demo data');
+      const fallbackInvoice = {
+        ...newInvoice,
+        id: Date.now(),
+        invoiceNumber: `BILL-${Date.now().toString().slice(-6)}`,
+        paidAmount: 0,
+        paymentStatus: 'UNPAID',
+      };
+      if (user?.role === 'CUSTOMER') {
+        saveLocalBill(fallbackInvoice);
+      }
+      setInvoices((current) => [fallbackInvoice, ...current]);
+      setStatus(user?.role === 'CUSTOMER' ? 'Final bill created' : 'Invoice added to browser demo data');
+    }
+    if (user?.role === 'CUSTOMER') {
+      setCustomerView('bills');
+      setInvoiceForm((current) => ({
+        ...current,
+        items: [{ description: '', hsnCode: '', quantity: 1, unitPrice: '' }],
+      }));
     }
     setSummary(null);
+  }
+
+  function updateInvoiceItem(index, field, value) {
+    setInvoiceForm((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item),
+    }));
+  }
+
+  function addInvoiceItem() {
+    setInvoiceForm((current) => ({
+      ...current,
+      items: [...current.items, { description: '', hsnCode: '', quantity: 1, unitPrice: '' }],
+    }));
+  }
+
+  function removeInvoiceItem(index) {
+    setInvoiceForm((current) => ({
+      ...current,
+      items: current.items.length === 1 ? current.items : current.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
   }
 
   async function recordPayment(event) {
@@ -264,6 +347,84 @@ function App() {
             <span>Customer: customer@invoice.local / customer123</span>
           </div>
           {status && <p className="status-line">{status}</p>}
+        </section>
+      </main>
+    );
+  }
+
+  if (user.role === 'CUSTOMER') {
+    return (
+      <main className="customer-shell">
+        <aside className="customer-side-panel">
+          <div className="brand-block">
+            <span className="brand-mark">GST</span>
+            <div>
+              <strong>Invoice Desk</strong>
+              <small>Customer</small>
+            </div>
+          </div>
+          <nav className="customer-menu">
+            <button className={customerView === 'billing' ? 'active' : ''} onClick={() => setCustomerView('billing')}>
+              Billing / Invoice
+            </button>
+            <button className={customerView === 'bills' ? 'active' : ''} onClick={() => setCustomerView('bills')}>
+              Bills
+            </button>
+          </nav>
+          <button className="ghost-button" onClick={() => setUser(null)}>Sign out</button>
+        </aside>
+
+        <section className="customer-main">
+          <header className="customer-topbar">
+            <div>
+              <p className="eyebrow">{customerView === 'billing' ? 'Create bill' : 'Generated bills'}</p>
+              <h1>{customerView === 'billing' ? 'Billing / Invoice' : 'Bills'}</h1>
+            </div>
+          </header>
+
+          {customerView === 'billing' && (
+            <form onSubmit={createInvoice} className="customer-invoice-card">
+              <div className="bill-form-heading">
+                <div>
+                  <p className="eyebrow">Bill items</p>
+                  <h2>Enter item details</h2>
+                </div>
+                <label>
+                  GST type
+                  <select value={invoiceForm.gstType} onChange={(event) => setInvoiceForm({ ...invoiceForm, gstType: event.target.value })}>
+                    <option value="CGST_SGST">Same state</option>
+                    <option value="IGST">Other state</option>
+                  </select>
+                </label>
+              </div>
+
+              <BillItemsTable
+                items={invoiceForm.items}
+                onChange={updateInvoiceItem}
+                onAdd={addInvoiceItem}
+                onRemove={removeInvoiceItem}
+              />
+
+              <div className="bill-footer-actions">
+                <button className="customer-submit" type="submit">Final Bill</button>
+                {status && <p className="customer-status">{status}</p>}
+              </div>
+            </form>
+          )}
+
+          {customerView === 'bills' && (
+            <section className="bills-section">
+              {visibleInvoices.length === 0 && (
+                <div className="empty-bills">
+                  <h2>No bills yet</h2>
+                  <button className="primary-button" onClick={() => setCustomerView('billing')}>Create bill</button>
+                </div>
+              )}
+              {visibleInvoices.map((invoice) => (
+                <BillCard key={invoice.id} invoice={invoice} customer={visibleCustomers[0]} />
+              ))}
+            </section>
+          )}
         </section>
       </main>
     );
@@ -328,8 +489,8 @@ function App() {
               <select value={invoiceForm.customerId} onChange={(event) => setInvoiceForm({ ...invoiceForm, customerId: event.target.value })}>
                 {visibleCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
               </select>
-              <input value={invoiceForm.description} onChange={(event) => setInvoiceForm({ ...invoiceForm, description: event.target.value })} />
-              <input type="number" min="1" value={invoiceForm.unitPrice} onChange={(event) => setInvoiceForm({ ...invoiceForm, unitPrice: event.target.value })} />
+              <input value={invoiceForm.items[0]?.description || ''} onChange={(event) => updateInvoiceItem(0, 'description', event.target.value)} placeholder="Description" />
+              <input type="number" min="1" value={invoiceForm.items[0]?.unitPrice || ''} onChange={(event) => updateInvoiceItem(0, 'unitPrice', event.target.value)} placeholder="Price" />
               <select value={invoiceForm.gstType} onChange={(event) => setInvoiceForm({ ...invoiceForm, gstType: event.target.value })}>
                 <option value="CGST_SGST">CGST + SGST</option>
                 <option value="IGST">IGST</option>
@@ -348,7 +509,7 @@ function App() {
         <section id="invoices" className="content-section">
           <div className="section-heading"><h3>Invoices and GST</h3>{status && <span>{status}</span>}</div>
           <div className="invoice-table architecture-table">
-            <div className="table-row header"><span>Invoice</span><span>Customer</span><span>GST</span><span>Payment</span><span>Total</span></div>
+            <div className="table-row header"><span>Invoice</span><span>Customer</span><span>Status</span><span>GST</span><span>Payment</span><span>Total</span></div>
             {visibleInvoices.map((invoice) => {
               const customer = customers.find((item) => item.id === invoice.customerId) || demoData.customers.find((item) => item.id === invoice.customerId);
               const split = taxSplit(invoice);
@@ -356,6 +517,7 @@ function App() {
                 <div className="table-row" key={invoice.id}>
                   <span>{invoice.invoiceNumber}</span>
                   <span>{customer?.name || 'Customer'}</span>
+                  <span className="status-badge">{invoice.status}</span>
                   <span>{invoice.gstType} | CGST {formatMoney(split.cgst)} SGST {formatMoney(split.sgst)} IGST {formatMoney(split.igst)}</span>
                   <span className="status-badge">{invoice.paymentStatus}</span>
                   <strong>{formatMoney(total(invoice))}</strong>
@@ -418,6 +580,104 @@ function DataList({ title, rows, fields, flag }) {
           {flag && row[flag] && <em>Low stock</em>}
         </div>
       ))}
+    </article>
+  );
+}
+
+function BillItemsTable({ items, onChange, onAdd, onRemove }) {
+  const total = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+
+  return (
+    <div className="bill-entry">
+      <div className="bill-row bill-header">
+        <span>S.No</span>
+        <span>Description</span>
+        <span>HSN</span>
+        <span>Quantity</span>
+        <span>Price</span>
+        <span></span>
+      </div>
+      {items.map((item, index) => (
+        <div className="bill-row" key={`bill-row-${index}`}>
+          <strong>{index + 1}</strong>
+          <input
+            value={item.description}
+            onChange={(event) => onChange(index, 'description', event.target.value)}
+            placeholder="Item name"
+            required={index === 0}
+          />
+          <input
+            value={item.hsnCode}
+            onChange={(event) => onChange(index, 'hsnCode', event.target.value)}
+            placeholder="HSN"
+          />
+          <input
+            type="number"
+            min="1"
+            value={item.quantity}
+            onChange={(event) => onChange(index, 'quantity', event.target.value)}
+          />
+          <input
+            type="number"
+            min="0"
+            value={item.unitPrice}
+            onChange={(event) => onChange(index, 'unitPrice', event.target.value)}
+            placeholder="0"
+            required={index === 0}
+          />
+          <button type="button" className="mini-button" onClick={() => onRemove(index)}>Remove</button>
+        </div>
+      ))}
+      <div className="bill-actions">
+        <button type="button" className="ghost-button" onClick={onAdd}>Add row</button>
+        <strong>Total: {formatMoney(total)}</strong>
+      </div>
+    </div>
+  );
+}
+
+function BillCard({ invoice, customer }) {
+  return (
+    <article className="bill-card">
+      <div className="bill-card-header">
+        <div>
+          <p className="eyebrow">Bill</p>
+          <h2>{invoice.invoiceNumber}</h2>
+        </div>
+        <button className="primary-button print-button" onClick={() => window.print()}>Print</button>
+      </div>
+
+      <div className="bill-meta">
+        <span>Date: {invoice.issueDate}</span>
+        <span>Customer: {customer?.name || 'Customer'}</span>
+        <span>Status: {invoice.status}</span>
+      </div>
+
+      <div className="bill-print-table">
+        <div className="bill-print-row bill-print-head">
+          <span>S.No</span>
+          <span>Description</span>
+          <span>HSN</span>
+          <span>Quantity</span>
+          <span>Price</span>
+          <span>Amount</span>
+        </div>
+        {invoice.items.map((item, index) => (
+          <div className="bill-print-row" key={`${invoice.id}-${index}`}>
+            <span>{index + 1}</span>
+            <span>{item.description}</span>
+            <span>{item.hsnCode || '-'}</span>
+            <span>{item.quantity}</span>
+            <span>{formatMoney(item.unitPrice)}</span>
+            <strong>{formatMoney(item.quantity * item.unitPrice)}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="bill-total-line">
+        <span>Total</span>
+        <strong>{formatMoney(total(invoice))}</strong>
+      </div>
     </article>
   );
 }

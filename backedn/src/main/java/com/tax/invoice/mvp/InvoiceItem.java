@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 
 public record InvoiceItem(
         String description,
+        String hsnCode,
         int quantity,
         BigDecimal unitPrice
 ) {

@@ -33,17 +33,21 @@ public class InvoiceController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('CA_SUPER_ADMIN','CLIENT_ADMIN')")
-    public Invoice createInvoice(@RequestBody InvoiceRequest request) {
+    @PreAuthorize("hasAnyRole('CA_SUPER_ADMIN','CLIENT_ADMIN','CUSTOMER')")
+    public Invoice createInvoice(@RequestBody InvoiceRequest request, Authentication authentication) {
+        AppUser user = (AppUser) authentication.getPrincipal();
+        long clientId = user.role() == Role.CA_SUPER_ADMIN ? request.clientId() : user.clientId();
+        long customerId = request.customerId() == 0 ? store.firstCustomerIdForClient(clientId) : request.customerId();
+        String status = request.status() == null ? (user.role() == Role.CUSTOMER ? "GENERATED" : "DRAFT") : request.status();
         return store.createInvoice(
-                request.clientId(),
+                clientId,
                 request.issueDate() == null ? LocalDate.now() : request.issueDate(),
                 request.dueDate() == null ? LocalDate.now().plusDays(15) : request.dueDate(),
-                request.customerId(),
+                customerId,
                 request.items(),
                 request.taxPercent() == null ? BigDecimal.valueOf(18) : request.taxPercent(),
                 request.gstType() == null ? "CGST_SGST" : request.gstType(),
-                request.status() == null ? "DRAFT" : request.status());
+                status);
     }
 
     @GetMapping("/summary")

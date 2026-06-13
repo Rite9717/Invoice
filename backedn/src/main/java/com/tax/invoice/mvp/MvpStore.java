@@ -58,12 +58,12 @@ public class MvpStore {
 
         invoices.put(1L, new Invoice(1, 1, 1, "INV-2026-001", LocalDate.now().minusDays(8),
                 LocalDate.now().plusDays(7),
-                List.of(new InvoiceItem("Spring Boot + React MVP sprint", 1, BigDecimal.valueOf(75000)),
-                        new InvoiceItem("Deployment setup", 1, BigDecimal.valueOf(15000))),
+                List.of(new InvoiceItem("Spring Boot + React MVP sprint", "998314", 1, BigDecimal.valueOf(75000)),
+                        new InvoiceItem("Deployment setup", "998313", 1, BigDecimal.valueOf(15000))),
                 BigDecimal.valueOf(18), "CGST_SGST", BigDecimal.valueOf(50000), "PARTIAL", "SENT"));
         invoices.put(2L, new Invoice(2, 2, 3, "INV-2026-002", LocalDate.now().minusDays(3),
                 LocalDate.now().plusDays(12),
-                List.of(new InvoiceItem("Monthly support retainer", 1, BigDecimal.valueOf(25000))),
+                List.of(new InvoiceItem("Monthly support retainer", "998313", 1, BigDecimal.valueOf(25000))),
                 BigDecimal.valueOf(18), "IGST", BigDecimal.ZERO, "UNPAID", "DRAFT"));
 
         payments.put(1L, new PaymentRecord(1, 1, BigDecimal.valueOf(50000), "UPI",
@@ -142,6 +142,14 @@ public class MvpStore {
                 .filter(customer -> user.role() == Role.CA_SUPER_ADMIN || customer.clientId() == user.clientId())
                 .sorted(Comparator.comparing(CustomerAccount::name))
                 .toList();
+    }
+
+    public long firstCustomerIdForClient(long accountId) {
+        return customers.values().stream()
+                .filter(customer -> customer.clientId() == accountId)
+                .map(CustomerAccount::id)
+                .findFirst()
+                .orElse(0L);
     }
 
     public List<PaymentRecord> paymentsForInvoices(List<Invoice> visibleInvoices) {
